@@ -1,7 +1,8 @@
 ---
-title: "my title"
-author: "Dummy Surname (dummy@mail.com)"
-date: "Last update: `r format(Sys.time(), '%d %B, %Y')`"      
+title: "Hands-on 1. Exploratory data analysis and Figure reproduction"
+author: "Maria Tarrat (mariat.tarrat01@estudiant.upf.edu) and Jingqi Fu(jingqi.fu01@estudiant.upf.edu)"
+date: "Last update: `r {months_en <- c('January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'); paste(format(Sys.time(), '%d'), months_en[as.numeric(format(Sys.time(), '%m'))], format(Sys.time(), '%Y'))}`"
+
 output:
   html_document:
     toc: true
@@ -10,54 +11,917 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+Sys.setlocale("LC_ALL", "en_US.UTF-8")
 ```
 
+# 1. Analysis of the Heart Disease Dataset
 
-# Analysis of the Heart Disease Dataset 
-Load the data from
-[here](https://raw.githubusercontent.com/jpinero/DMI_2021/main/datasets/heart_disease_dataset.csv), and the description is [here](https://raw.githubusercontent.com/jpinero/DMI_2021/main/datasets/heart_disease_description.txt). 
-The original dataset comes from [here](https://archive.ics.uci.edu/ml/datasets/Heart+Disease) and corresponds to the [processed cleveland data](https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data)
+Load the data from [here](https://raw.githubusercontent.com/jpinero/DMI_2021/main/datasets/heart_disease_dataset.csv), and the description is [here](https://raw.githubusercontent.com/jpinero/DMI_2021/main/datasets/heart_disease_description.txt). The original dataset comes from [here](https://archive.ics.uci.edu/ml/datasets/Heart+Disease) and corresponds to the [processed cleveland data](https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data)
 
 ## Perform an EDA on the dataset
 
 ```{r}
+# Load all the needed functions for this exercise
+library(pacman)
+ 
+
+p_load(miceRanger,
+       DataExplorer,
+       ggplot2,
+       outliers,
+       dplyr,
+       broom,
+       ggplot2,
+       gridExtra,
+       patchwork,
+       corrplot)
 
 
+### Import the data
+hd <- read.csv("data/heart_disease_dataset.csv", sep = " ", row.names = "patient_id")
+hd <- as.data.frame(hd) # turn it into a data frame
+rownames(hd) <- hd$patient_id
+head(hd)
 
 ```
+In our dataset we have a total of 303 patients and 15 features.
 
+Features of the heart disease dataset (obtained from the description file): <br>
+
+- `age`: age in years <br>
+- `sex`: sex (1 = male; 0 = female) <br>
+- `cp`: chest pain type [Value 1: typical angina, Value 2: atypical angina, Value 3: non-anginal pain, Value 4: asymptomatic]
+- `trestbps`: resting blood pressure (in mm Hg on admission to the hospital) <br>
+- `chol`: serum cholestoral in mg/dl <br>
+- `fbs`: (fasting blood sugar > 120 mg/dl)  (1 = true; 0 = false) <br>
+- `restecg`: resting electrocardiographic results [Value 0: normal, Value 1: having ST-T wave abnormality (T wave inversions and/or ST elevation or depression of > 0.05 mV), Value 2: showing probable or definite left ventricular hypertrophy by Estes' criteria ] <br>
+- `thalach`: maximum heart rate achieved <br>
+- `exang`: exercise induced angina (1 = yes; 0 = no) <br>
+- `oldpeak` = ST depression induced by exercise relative to rest <br>
+- `slope`: the slope of the peak exercise ST segment [ Value 1: upsloping, Value 2: flat, Value 3: downsloping] <br>
+- `ca`: number of major vessels (0-3) colored by flourosopy <br>
+- `thal`: 3 = normal; 6 = fixed defect; 7 = reversable defect <br>
+- `num`: diagnosis of heart disease (angiographic disease status) [Value 0: < 50% diameter narrowing, Value 1: > 50% diameter narrowing] <br>
+
+We can divide them into quantitative and categorical featues: <br>
+
+- Quantitative features: age, trestbps, chol, thalach, oldpeak <br>
+- Categorical features: sex, cp, fbs, restecg, exang, slope, ca, thal, num
+
+```{r}
+quantitative_features <- c("age", "trestbps", "chol", "thalach", "oldpeak")
+categorical_features <- c("sex", "cp", "fbs", "restecg", "exang", "slope", "ca", "thal", "num")
+
+### Data cleaning
+## Check the data type
+str(hd)
+# All of the features are detected as numeric or integers except for ca and thal
+
+## Correct data characters mistakes
+# Check if the values in the categorical features are correct
+for (feature in categorical_features) {
+  print(paste(feature, ":", toString(unique(hd[[feature]]))))
+}
+
+# We have three main issue ca, thal and num values
+# We are going to replace the ? and 2,3,4 from num with NA for now
+hd$ca[hd$ca == "?"] <- NA
+hd$thal[hd$thal == "?"] <- NA
+hd$num[hd$num %in% c(2, 3, 4)] <- NA
+
+# Now that the non numeric numbers are gone we can correct the data type for both ca and thal
+hd <- type.convert(hd, as.is = TRUE)
+
+# Check if the values in the quantitative features are correct
+for (feature in quantitative_features) {
+  print(paste(feature, "range:", min(hd[[feature]], na.rm = TRUE), "to", max(hd[[feature]], na.rm = TRUE)))
+  # Print summary statistics
+  cat("Summary statistics:\n")
+  print(summary(hd[[feature]]))
+}
+# All the obtained ranges make sense for a heart disease dataset. Some values might seem too high or low for healthy people, but can be possible in patients suffering from heart disease.
+
+## Check for missing values and replace them by imputing
+# There are some missing values in our dataset due to us having replaced the incorrect values earlier with NA
+colSums(is.na(hd))
+
+# Plot to visualize the missing data
+# The highest percentage of missing values is found in the num feature, which is the heart disease diagnosis. Which can be inferred through imputing if we have all the other features.
+missing_plot <- (plot_missing(hd) +
+                  theme_minimal() +
+                  labs(title = "Percentage of missing data in Heart Disease Dataset",
+                       x = "Features",
+                       y = "Missing rows") +
+                  theme(
+                    plot.title = element_text(size = 16, face = "bold"),
+                    axis.line = element_line(color = "black"),
+                    axis.ticks = element_line(color = "black"),
+                    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+                    panel.grid.minor = element_blank(),
+                    legend.position = "bottom"
+                  )) 
+# Random seed for reproductibility
+set.seed(123)
+
+# Due to the missing values all being in categorical features we use the predictive mean value method for imputing
+mice_imputation_pmm <- miceRanger(hd, valueSelector="meanMatch", verbose = FALSE)
+
+# We obtain the first imputed dataset
+hd_complete <- completeData(mice_imputation_pmm)[[1]] 
+hd_complete <- as.data.frame(hd_complete) # hd_complete is a data.table so we convert it to a data frame
+
+# Now we don't have any missing values anymore
+colSums(is.na(hd_complete))
+
+# We make a list of the variables with missing data and iterate through them to find which values where imputed and by what value
+missing_vars <- c("ca", "thal", "num")
+
+for (var in missing_vars) {
+  # Get row indices where data was missing
+  missing_rows <- which(is.na(hd[[var]]))
+  
+  cat("Feature:", var, "\n")
+  cat("Rows with missing values:", missing_rows, "\n")
+  cat("Imputed values:", hd_complete[missing_rows, var], "\n\n")
+}
+
+## Check for duplicate rows
+# There are no duplicates rows
+sum(duplicated(hd_complete))
+
+# Before starting with the plotting we should label the categorical values with their real names
+hd_complete$sex <- factor(hd_complete$sex, levels = c(0, 1), labels = c("Female", "Male"))
+hd_complete$cp <- factor(hd_complete$cp, levels = c(1, 2, 3, 4), 
+                labels = c("typical angina", "atypical angina", "non-anginal pain", "asymptomatic"))
+hd_complete$fbs <- factor(hd_complete$fbs, levels = c(0, 1), labels = c("False", "True"))
+hd_complete$restecg <- factor(hd_complete$restecg, levels = c(0, 1, 2), 
+                    labels = c("normal", "ST-T wave abnormality", "left ventricular hypertrophy"))
+hd_complete$exang <- factor(hd_complete$exang, levels = c(0, 1), labels = c("No", "Yes"))
+hd_complete$slope <- factor(hd_complete$slope, levels = c(1, 2, 3), labels = c("upsloping", "flat", "downsloping"))
+hd_complete$ca <- factor(hd_complete$ca, levels = c(0, 1, 2, 3), 
+                labels = c("0 major vessels", "1 major vessel", "2 major vessels", "3 major vessels"))
+hd_complete$thal <- factor(hd_complete$thal, levels = c(3, 6, 7), 
+                  labels = c("normal", "fixed defect", "reversable defect"))
+
+# For simplicity we will interpret the num feature as Disease and No disease
+hd_complete$num <- factor(hd_complete$num, levels = c(0, 1), 
+                 labels = c("No disease", "Disease"))
+
+## Outliers
+# We want to find if there are any outliers in the quantitative features
+
+# Obtain feature values that have a z-score higher than 3 (3SD)
+for(feature in quantitative_features) {
+  feature_values <- hd_complete[[feature]]
+  z_scores <- scores(feature_values)
+  
+  outlier_threshold <- 3
+  outliers_indices <- which(abs(z_scores) > outlier_threshold)
+  
+  for (index in outliers_indices){
+    cat("Feature =", feature, "\n")
+    cat("Outlier =", hd_complete[index, feature], "\n")
+    cat("Z-score =", z_scores[index], "\n")
+    cat("\n")
+  }
+}
+
+# Here we can see each of the features in a boxplot by disease status, with the outliers highlighted
+par(mfrow=c(2,3)) # 2×3 grid for the plots
+for(feature in quantitative_features) {
+  # Create a boxplot with disease status on x-axis and feature value on y-axis
+  boxplot(as.formula(paste(feature, "~ num")), 
+          data = hd_complete,
+          main = paste(feature, "by disease status"),
+          xlab = "Disease Status",
+          ylab = feature,
+          col = c("#69b3a2", "#E69F00"),
+          outcol = c("#536c6d", "#e2752f"),
+          outpch = 19)
+}
+```
+
+Due to this being a heart disease dataset it is likely that some of this outliers are real values obtained from a particular patient and taking them out might cause a lose of accuracy. 
+
+For this reason we are only be taking out the rows with really extreme outliers, 564 value in chol with a z-score of 6.128347 and the 6.2 value in oldpeak with a z-score of 4.444498. The remaining ones all have an absolute z-score lower than 4.
+
+```{r}
+chol_outlier <- which(hd_complete$chol == 564)
+oldpeak_outlier <- which(hd_complete$oldpeak == 6.2)
+hd_no_outliers <- hd_complete[-c(chol_outlier, oldpeak_outlier), ]
+
+
+## Statistics summary
+summary(hd_complete)
+```
 
 ## Create visualizations in order to show which variables seem to be more associated with heart disease
 
-```{r}
+```{r, fig.width=15, fig.height=6}
+
+# 1. VISUALIZATION OF VARIABLES
+# Create a theme for consistent visualization
+my_theme <- theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right",
+    panel.grid.minor = element_blank()
+  )
+
+# 1.1 Categorical variables visualization
+# Create bar plots for each categorical variable by disease status
+
+# Function to create a bar plot for a categorical variable
+create_bar_plot <- function(data, var_name) {
+  ggplot(data, aes(x = !!as.name(var_name), fill = num)) +
+    geom_bar(position = "dodge") +
+    scale_fill_manual(values = c("No disease" = "#69b3a2", "Disease" = "#E69F00")) +
+    labs(title = paste(var_name, "and Heart Disease"),
+         x = var_name,
+         y = "Count",
+         fill = "Heart Disease") +
+    my_theme
+}
+
+# Create a list of plots for categorical variables
+cat_plots <- list()
+for (var in categorical_features[categorical_features != "num"]) {
+  cat_plots[[var]] <- create_bar_plot(hd_no_outliers, var)
+}
+
+# Display categorical plots in a grid (4 plots per page)
+grid.arrange(grobs = cat_plots[1:4], ncol = 2)
+grid.arrange(grobs = cat_plots[5:8], ncol = 2)
+
+# Alternative view: Proportion of disease by category
+# This helps better visualize the relationship
+create_prop_plot <- function(data, var_name) {
+  # Calculate proportions
+  prop_data <- data %>%
+    group_by(!!as.name(var_name), num) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    group_by(!!as.name(var_name)) %>%
+    mutate(prop = count / sum(count))
+  
+  # Create the plot
+  ggplot(prop_data, aes(x = !!as.name(var_name), y = prop, fill = num)) +
+    geom_bar(stat = "identity", position = "stack") +
+    scale_fill_manual(values = c("No disease" = "#69b3a2", "Disease" = "#E69F00")) +
+    labs(title = paste("Proportion of Heart Disease by", var_name),
+         x = var_name,
+         y = "Proportion",
+         fill = "Heart Disease") +
+    my_theme
+}
+
+# Create proportion plots for categorical variables
+prop_plots <- list()
+for (var in categorical_features[categorical_features != "num"]) {
+  prop_plots[[var]] <- create_prop_plot(hd_no_outliers, var)
+}
+
+# Display proportion plots
+grid.arrange(grobs = prop_plots[1:4], ncol = 2)
+grid.arrange(grobs = prop_plots[5:8], ncol = 2)
+
+
+# 1.2 Quantitative variables visualization
+# Density plots for quantitative variables by disease status
+create_density_plot <- function(data, var_name) {
+  ggplot(data, aes(x = !!as.name(var_name), fill = num)) +
+    geom_density(alpha = 0.7) +
+    scale_fill_manual(values = c("No disease" = "#69b3a2", "Disease" = "#E69F00")) +
+    labs(title = paste(var_name, "Distribution by Heart Disease"),
+         x = var_name,
+         y = "Density",
+         fill = "Heart Disease") +
+    my_theme
+}
+
+# Create density plots
+quant_plots <- list()
+for (var in quantitative_features) {
+  quant_plots[[var]] <- create_density_plot(hd_no_outliers, var)
+}
+
+# Display density plots
+grid.arrange(grobs = quant_plots, ncol = 2)
+
+# Boxplots for quantitative variables (alternative view)
+create_box_plot <- function(data, var_name) {
+  ggplot(data, aes(x = num, y = !!as.name(var_name), fill = num)) +
+    geom_boxplot() +
+    scale_fill_manual(values = c("No disease" = "#69b3a2", "Disease" = "#E69F00")) +
+    labs(title = paste(var_name, "by Heart Disease Status"),
+         x = "Heart Disease",
+         y = var_name) +
+    my_theme
+}
+
+# Create boxplots
+box_plots <- list()
+for (var in quantitative_features) {
+  box_plots[[var]] <- create_box_plot(hd_no_outliers, var)
+}
+
+# Display boxplots
+grid.arrange(grobs = box_plots, ncol = 2)
+
+
+
+# 2. STATISTICAL ANALYSIS
+# 2.1 Correlation analysis for quantitative variables
+# Create a numeric dataframe for correlation analysis
+
+numeric_data <- hd_no_outliers %>%
+  select(all_of(quantitative_features), num) %>%
+  mutate(num = as.numeric(as.character(factor(num, levels = c("No disease", "Disease"), labels = c(0, 1)))))
+
+# Calculate correlation matrix
+corr_matrix <- cor(numeric_data)
+
+# Visualization of correlation matrix
+corrplot(corr_matrix, method = "circle", type = "upper", 
+         tl.col = "black", tl.srt = 45, 
+         title = "Correlation Matrix of Quantitative Variables with Heart Disease",
+         mar = c(0, 0, 2, 0))
+
+# Calculate individual correlations with heart disease (num)
+corr_with_disease <- data.frame(
+  variable = quantitative_features,
+  correlation = sapply(quantitative_features, function(x) cor(numeric_data[[x]], numeric_data[["num"]]))
+)
+
+# Sort by absolute correlation strength
+corr_with_disease <- corr_with_disease %>%
+  mutate(abs_corr = abs(correlation)) %>%
+  arrange(desc(abs_corr))
+
+# Display correlation results
+print(corr_with_disease)
+
+# Visualize correlations with heart disease
+ggplot(corr_with_disease, aes(x = reorder(variable, abs_corr), y = correlation)) +
+  geom_bar(stat = "identity", fill = ifelse(corr_with_disease$correlation > 0, "#E69F00", "#69b3a2")) +
+  coord_flip() +
+  labs(title = "Correlation of Quantitative Variables with Heart Disease",
+       x = "Variables",
+       y = "Correlation Coefficient") +
+  my_theme
+
+# 2.2 Chi-square test for categorical variables
+# Function to perform chi-square test
+perform_chi_square <- function(data, var_name) {
+  # Create contingency table
+  cont_table <- table(data[[var_name]], data[["num"]])
+  
+  # Perform chi-square test
+  chi_test <- chisq.test(cont_table)
+  
+  # Return test results
+  return(list(
+    variable = var_name,
+    p_value = chi_test$p.value,
+    chi_squared = chi_test$statistic,
+    df = chi_test$parameter
+  ))
+}
+
+# Perform chi-square test for each categorical variable
+chi_results <- lapply(categorical_features[categorical_features != "num"], 
+                      function(var) perform_chi_square(hd_no_outliers, var))
+
+# Convert results to a data frame
+chi_results_df <- do.call(rbind.data.frame, lapply(chi_results, function(x) {
+  data.frame(
+    variable = x$variable,
+    p_value = x$p_value,
+    chi_squared = x$chi_squared,
+    df = x$df
+  )
+}))
+
+# Sort by p-value (ascending)
+chi_results_df <- chi_results_df %>%
+  arrange(p_value)
+
+# Display chi-square results
+print(chi_results_df)
+
+# Visualize chi-square results
+ggplot(chi_results_df, aes(x = reorder(variable, -log10(p_value)), y = -log10(p_value))) +
+  geom_bar(stat = "identity", fill = "#E69F00") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red") +
+  labs(title = "Chi-square Test Results for Categorical Variables",
+       x = "Variables",
+       y = "-log10(p-value)",
+       caption = "Red line indicates significance level (p = 0.05)") +
+  my_theme
+
+
+# 3. INFLUENCE ON HEART DISEASE
+# Logistic regression to identify important variables
+
+# Prepare data for logistic regression
+model_data <- hd_no_outliers
+model_data$num_binary <- ifelse(model_data$num == "Disease", 1, 0)
+
+# Convert categorical variables to factors (if not already)
+for (var in categorical_features) {
+  model_data[[var]] <- as.factor(model_data[[var]])
+}
+
+# Fit logistic regression model
+log_model <- glm(num_binary ~ age + sex + cp + trestbps + chol + fbs + restecg + 
+                  thalach + exang + oldpeak + slope + ca + thal,
+                data = model_data, family = binomial)
+
+# Summarize model
+model_summary <- summary(log_model)
+print(model_summary)
+
+# Get tidy model results
+tidy_model <- tidy(log_model) %>%
+  mutate(
+    odds_ratio = exp(estimate),
+    lower_ci = exp(estimate - 1.96 * std.error),
+    upper_ci = exp(estimate + 1.96 * std.error)
+  ) %>%
+  filter(term != "(Intercept)") %>%
+  arrange(p.value)
+
+# Display model results
+print(tidy_model)
+
+# Visualize top significant predictors
+top_predictors <- tidy_model %>%
+  filter(p.value < 0.05) %>%
+  arrange(p.value)
+
+# Plot odds ratios for significant predictors
+ggplot(top_predictors, aes(x = reorder(term, -log10(p.value)), y = odds_ratio)) +
+  geom_point(size = 3, color = "#E69F00") +
+  geom_errorbar(aes(ymin = lower_ci, ymax = upper_ci), width = 0.2) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  coord_flip() +
+  labs(title = "Odds Ratios for Significant Heart Disease Predictors",
+       x = "Variables",
+       y = "Odds Ratio (log scale)",
+       caption = "Error bars represent 95% confidence intervals\nRed line indicates OR = 1 (no effect)") +
+  scale_y_log10() +
+  my_theme
+
+
+# Create a combined visualization of key findings
+
+# Select top 3 categorical and top 3 quantitative variables based on statistical tests
+top_cat_vars <- chi_results_df$variable[1:3]
+top_quant_vars <- corr_with_disease$variable[1:3]
+
+# Create plots for top variables
+top_cat_plots <- lapply(top_cat_vars, function(var) create_prop_plot(hd_no_outliers, var))
+top_quant_plots <- lapply(top_quant_vars, function(var) create_density_plot(hd_no_outliers, var))
+
+# Combine plots
+(grid.arrange(grobs = top_cat_plots, ncol = 3, top = "Top Categorical Predictors"))
+(grid.arrange(grobs = top_quant_plots, ncol = 3, top = "Top Quantitative Predictors"))
 
 ```
 
+From these results we can conclude that both thalach, oldpeak and age are strongly correlated with heart disease. Lower max heart rate, ST depression induced by exercise and an older age are associated with heart disease.
 
-# 2 Difference in mortality rates in hospitalized COVID-19 patients 
+As for the categorical variables all of them except for fbs show a signinficant association with heart disease. Out of those cp, thal and exang are more significant. Individuals with heart disease are likely to be asymptomatic, have a reversable or fixed defect and to have exercise induced angina.
+
+Additionally males have higher odd of heart disease than females and individuals with heart disease tend to have one or more major vessel.
+
+
+# 2. Difference in mortality rates in hospitalized COVID-19 patients
+
 Using the supplementary material from the [Difference in mortality rates in hospitalized COVID-19 patients identified by cytokine profile clustering using a machine learning approach: An outcome prediction alternative](https://www.frontiersin.org/articles/10.3389/fmed.2022.987182/full), perform the following tasks
 
 ## Reproduce Figure 1 from the publication
 
 ```{r}
+# Load all the needed functions for this exercise
+p_load(readxl,
+       gt, 
+       dplyr, 
+       tidyr, 
+       gridExtra, 
+       circlize,
+       ComplexHeatmap,
+       patchwork)
+
+suppressMessages({
+  table <- read_excel("data/Figure_1_Table.XLSX")
+})
+table <- as.data.frame(table) # turn it into a data frame
+
+# Save the first row into variable new_colnames and add the new column names to the table
+new_colnames <- as.character(table[1, ])
+new_colnames <- gsub(" ", "_", new_colnames)
+colnames(table) <- new_colnames
+table <- table[-1, ] # delete the first row
+rownames(table) <- NULL # resets row numbers
 
 ```
 
-
-## Reproduce Figure 2 from the publication
-but instead of representing the clusters in the annotation, represent the groups (G1 to G4)
+First we will start by doing an exploratory data analysis to solve any issues with the data, such as the presence of duplicated IDs or duplicated rows, and decide how to deal with unusual values or typos in the table. 
 
 ```{r}
+
+## Exploratory data analysis
+
+#class(table)
+#dim(table)
+#str(table) 
+
+# Find duplicates where the whole row is identical and only keep one of them
+duplicates_removed_table <- table[!duplicated(table),]
+dim(duplicates_removed_table) # 2 rows removed
+
+# Finds duplicates with the same ID but differences in other values and remove both
+incorrect_IDs <- duplicates_removed_table$ID[duplicated(duplicates_removed_table$ID)]
+duplicates_and_incorrect_IDs_removed_table <- duplicates_removed_table[!duplicates_removed_table$ID %in% incorrect_IDs, ]
+dim(duplicates_and_incorrect_IDs_removed_table) # 12 rows removed
+
+table_modified <- duplicates_and_incorrect_IDs_removed_table
+
+# Replace all NI by NA
+for (column_name in new_colnames) {
+  for (i in 1:nrow(table_modified)) {
+    if (identical(table_modified[[column_name]][i],"NI")) {
+      table_modified[[column_name]][i] <- NA
+    }
+  }
+}
+
+# Assign NA to unusual values in the Yes/No columns
+Yes_No_column_names <- c("Admission_to_ICU", "ARDS_Diagnosis", "CRS_Diagnosis", "Use_of_NIV", "Use_of_AMV", "Death")
+
+for (column_name in Yes_No_column_names) {
+  for (i in 1:nrow(table_modified)) {
+    if (!table_modified[[column_name]][i] %in% c("Yes", "No")) {
+      table_modified[[column_name]][i] <- NA
+    }
+  }
+}
+
+# Assign NA to unusual values in the Gender column
+for (i in 1:nrow(table_modified)) {
+  if (!table_modified$Gender[i] %in% c("M", "F")) {
+    table_modified$Gender[i] <- NA
+  }
+}
+
+# Correct typo in some IDs
+table_modified$ID <- gsub("HSDJ", "HSJD", table_modified$ID)
+
+# Change , to . in some BMI values
+table_modified$BMI <- gsub(",", ".", table_modified$BMI)
+
+# Apply type conversion to all the columns
+cleaned_table <- type.convert(table_modified, as.is = TRUE)
+str(cleaned_table)
+
+```
+
+For Figure 3 we need to add a new column to the table to classify the patient in a particular group depending on different factors (Use of NIV, use of AMV or ARDS diagnosis). For some unknown reason the authors of the article decided to not include the case NIV -, AMV - and ARDS + into their classification. For this reason Figure 3 will be done with a table with those particular rows taken out. For Figure 4 the rows where death is NA will be taken out.
+
+```{r}
+# Add a new column with the groups each patient belongs to
+for (i in 1:nrow(cleaned_table)) {
+  if (is.na(cleaned_table$"Use_of_NIV"[i]) | is.na(cleaned_table$"Use_of_AMV"[i]) | is.na(cleaned_table$"ARDS_Diagnosis"[i])) {
+    cleaned_table$Clinical_Classification[i] <- NA
+  } else if (cleaned_table$"Use_of_NIV"[i] == "No" & cleaned_table$"Use_of_AMV"[i] == "No" & cleaned_table$"ARDS_Diagnosis"[i] == "No") {cleaned_table$Clinical_Classification[i] <- "G1"
+  } else if (cleaned_table$"Use_of_NIV"[i] %in% c("No", "Yes") & cleaned_table$"Use_of_AMV"[i] %in% c("No", "Yes") & cleaned_table$"ARDS_Diagnosis"[i] == "No") {cleaned_table$Clinical_Classification[i] <- "G2"
+  } else if (cleaned_table$"Use_of_NIV"[i] == "Yes" & cleaned_table$"Use_of_AMV"[i] == "No" & cleaned_table$"ARDS_Diagnosis"[i] == "Yes") {cleaned_table$Clinical_Classification[i] <- "G3"
+  } else if (cleaned_table$"Use_of_NIV"[i] %in% c("No", "Yes") & cleaned_table$"Use_of_AMV"[i] == "Yes" & cleaned_table$"ARDS_Diagnosis"[i] == "Yes") {cleaned_table$Clinical_Classification[i] <- "G4"
+  } else {
+    cleaned_table$Clinical_Classification[i] <- NA
+  }
+}
+
+# Create table taking out the rows with NA in the Clinical_Classification column
+cleaned_table_without_class_nulls <- cleaned_table %>%
+  filter(!is.na(Clinical_Classification))
+
+dim(cleaned_table) # 200 19
+dim(cleaned_table_without_class_nulls) # 196 19
+
+# Create table remove rows where Death column has NA values for Figure 4
+cleaned_table_no_na_death <- cleaned_table %>%
+  filter(!is.na(Death))
+
+```
+
+Now we will reproduce all the images from Figure 1 of the [article](https://www.frontiersin.org/articles/10.3389/fmed.2022.987182/full).
+
+```{r}
+
+## Figure 1.A
+figure1a <- ggplot(data = cleaned_table, mapping = aes(x = Age)) + 
+            geom_histogram(binwidth = 10, boundary = 20, fill = "#e0eeee", color = "black") +
+            theme_minimal() + 
+            theme(
+              axis.line = element_line(color = "black"),
+              axis.ticks = element_line(color = "black"),
+              axis.ticks.length = unit(0.2, "cm"),
+              axis.text = element_text(color = "black"),
+              axis.text.x = element_text(margin = margin(t = 5)),
+              axis.text.y = element_text(angle = 90, hjust = 0.5, margin = margin(r = 5)),
+              axis.title = element_text(color = "black"),
+              plot.title = element_text(hjust = 0.5,  face = "bold"),
+              panel.grid = element_blank()
+            ) + 
+            labs(x = "\nAge (years)", y = "Frequency (n)\n", title = "Age\n") +
+            guides(y = guide_axis(cap = "both"), x = guide_axis(cap = "both")) +
+            scale_y_continuous(limits = c(0, 50))
+figure1a
+
+## Figure 1.B
+# Create the classification table
+classification_table <- data.frame(
+  "Clinical classification" = c("G1", "G2", "G3", "G4"),
+  NIV = c("-", "-/+", "+", "-/+"),
+  AMV = c("-", "+/-", "-", "+"),
+  ARDS = c("-", "-", "+", "+"),
+  check.names=FALSE)
+
+figure1b <- classification_table %>%
+              gt() %>%
+              tab_style(
+                style = list(
+                  cell_borders(sides = "all", color = "white", weight = px(2)),
+                  cell_text(align = "center", color = "black", font = "Arial")
+                  ),
+                locations = cells_body()
+              ) %>%
+              tab_style(
+                style = list(cell_borders(sides = "all", color = "white", weight = px(2)),
+                  cell_text(color = "black", weight = "bold", font = "Arial", align = "center"),
+                  cell_fill(color = "#cccccc")),
+                locations = cells_column_labels()
+              ) %>%
+              tab_style(
+                style = cell_fill(color = "#f2f2f2"),  
+                locations = cells_body(rows = c(1, 3)) 
+              ) %>%
+              tab_style(
+                style = cell_fill(color = "#e5e5e5"),  
+                locations = cells_body(rows = c(2, 4)) 
+              ) %>% 
+              tab_style(
+                style = "vertical-align:middle",
+                locations = cells_column_labels()
+              )
+
+figure1b_with_title <-figure1b %>%
+                      tab_header(
+                        title = md("**Definition of the clinical classification**")  
+                      )%>%
+                      tab_style(
+                        style = list(cell_text(color = "#000000", weight = "bold")),
+                        locations = cells_title()
+                      )
+
+figure1b_with_title
+
+## Figure 1.C
+figure1c <- ggplot(data = cleaned_table_without_class_nulls, 
+                   mapping = aes(x = Clinical_Classification, fill = Clinical_Classification)) + 
+            geom_bar(color = "black", width = 0.85) +
+            scale_fill_manual(values = c("#8dd3c8","#feffb3", "#bebbda", "#fb8071")) +
+            geom_text(stat = "count", aes(label = after_stat(count)), vjust = -1, color = "black") +
+            theme_minimal() + 
+            theme(
+              axis.line.y = element_line(color = "black"),
+              axis.text.y = element_text(angle = 90, hjust = 0.5, margin = margin(r = 5)),
+              axis.text = element_text(color = "black"),
+              axis.ticks.y = element_line(color = "black"),
+              axis.ticks.length.y = unit(0.2, "cm"),
+              panel.grid = element_blank(),
+              plot.title = element_text(hjust = 0.5,  face = "bold"),
+              legend.position = "none" 
+              ) + 
+            labs(x = "\nClinical Classification",
+                 y = "Frequency (n)\n",
+                 title = "Clinical classification\n") + 
+            guides(y = guide_axis(cap = "both")) +
+            scale_y_continuous(limits = c(0, 80))
+figure1c
+
+## Figure 1.D
+
+# Create the bar plot
+figure1d <- ggplot(data = cleaned_table_no_na_death, mapping = aes(x = Death, fill = Death)) + 
+              geom_bar(color = "black") + # Create bar chart with black borders, fill is based on 'Death'
+              geom_text(stat = "count", aes(label = after_stat(count)), vjust = -1, color = "black") +  # Add frequency labels on top of bars
+              theme_minimal() +  # Apply minimal theme
+              theme(
+                axis.line.y = element_line(color = "black"),  # Add black axis line on y-axis
+                axis.text.y = element_text(angle = 90, hjust = 0.5, margin = margin(r = 5)),  # Rotate y-axis text for better readability
+                axis.text = element_text(color = "black"),  # Set axis text color to black
+                axis.ticks.y = element_line(color = "black"),  # Add black ticks to y-axis
+                axis.ticks.length.y = unit(0.2, "cm"),  # Customize y-axis tick length
+                panel.grid = element_blank(),  # Remove grid lines
+                plot.title = element_text(hjust = 0.5, face = "bold"),  # Center and bold the plot title
+                legend.position = "none"
+              ) + 
+              labs(
+                x = "\nDeath",  # Label for x-axis
+                y = "Frequency (n)\n",  # Label for y-axis
+                title = "Vital Status\n"  # Title of the plot
+              ) + 
+              guides(y = guide_axis(cap = "both")) +  # Add caps to the y-axis labels
+              scale_y_continuous(limits = c(0, 150)) +  # Set y-axis limits (adjust according to data)
+              scale_fill_manual(values = c("No" = "#79dac9", "Yes" = "#f3ffb1"))  # Manually assign colors: green for 'No', yellow for 'Yes'
+figure1d
+
+
+# Arrange all the figures in a 2x2 grid and display Figure 1
+combined_figure <- (figure1a | figure1b) / (figure1c | figure1d) +
+  plot_annotation(
+    tag_levels = 'A',
+  ) &
+  theme(plot.margin = margin(0, 0, 0, 0),
+        plot.tag = element_text(face = "bold", size = 14) )
+
+combined_figure
+
+```
+
+## Reproduce Figure 2 from the publication
+
+But instead of representing the clusters in the annotation, represent the groups (G1 to G4)
+
+First we started by doing an overview of the data, correcting typos, checking for duplicated or strange values and removing rows where all the data is NA.
+
+```{r}
+suppressMessages({
+  table_2 <- read_excel("data/Figure_2_Table.XLSX")
+})
+table_2 <- as.data.frame(table_2)
+
+# Save first row names as column names and add the new column names to the table
+new_colnames_2 <- as.character(table_2[1, ])
+new_colnames_2 <- gsub(" ", "_", new_colnames_2)
+colnames(table_2) <- new_colnames_2
+colnames(table_2)[1] <- "ID"
+table_2 <- table_2[-1, ] # delete the first row
+rownames(table_2) <- NULL # resets row numbers
+
+
+# Fill the the empty spaces in the ID column with the ID belonging to the closest existing ID 
+table_2 <- table_2 %>%
+  fill(ID, .direction = "down")
+
+# Check for duplicates
+any(duplicated(table_2)) # There are no duplicates
+
+# Replace all NI by NA
+for (column_name in new_colnames_2) {
+  for (i in 1:nrow(table_2)) {
+    if (identical(table_2[[column_name]][i],"NI")) {
+      table_2[[column_name]][i] <- NA
+    }
+  }
+}
+
+# Replace all ND (not detected) by 0
+for (i in 1:nrow(table_2)) {
+  if (identical(table_2$`IL-6`[i],"ND")) {
+    table_2$`IL-6`[i] <- 0
+  }
+}
+
+# Correct typo in some IDs
+table_2$ID <- gsub("HSDJ", "HSJD", table_2$ID)
+
+# Obtain the columns we are interested in and apply type conversion to the table
+table_2_filtered_col <- table_2[, c(1:14)]
+table_2_filtered_col <- type.convert(table_2_filtered_col, as.is = TRUE)
+str(table_2_filtered_col)
+
+# Filter out the rows were all the data is NA
+table_2_filtered_col_rows <- table_2_filtered_col %>% filter(!if_all(-c("ID","Day"), ~ is.na(.)))
+
+```
+
+Here we calculated the median value per cytokine per patient and merged the table with the main table from exercise 1. Afterwards, all the necessary preparations and normalization of the data for the heatmap were done.
+
+```{r}
+# Calculate the median value of each cytokine per patient across the multiple days (similar to what the article does)
+table_2_with_medians <- table_2_filtered_col_rows %>%
+  group_by(ID) %>%                                            # Group by the ID
+  summarise(across(where(is.numeric), \(x) median(x, na.rm = TRUE)))  # Apply median function in 
+                                                                      # numeric columns
+
+# Select only the ID, Classification, Gender and Death columns from the main table of exercise 2 part 1 
+classification_table <- cleaned_table[] %>%
+  select(ID, Clinical_Classification, Gender, Death)
+
+# Merge with the main data table from exercise 1 part 1 (so we will only use the IDs which were not duplicated)
+merged_table <- left_join(classification_table, table_2_with_medians, by = "ID")
+# Filter out rows where the ID is found in the main table but no cytokine data is found
+merged_table <- merged_table %>% filter(!if_all(-c("ID", "Clinical_Classification", "Gender", "Death", "Day"), ~ is.na(.)))
+
+# Clinical classification, Gender and Death columns are stored in groups. 
+group_labels <- as.character(merged_table[[2]])
+gender_labels <- as.character(merged_table[[3]])
+death_labels <- as.character(merged_table[[4]])
+# Samples that don't have a classification are named NC for not classified
+group_labels[is.na(group_labels)] <- "NC"
+gender_labels[is.na(gender_labels)] <- "NC"
+death_labels[is.na(death_labels)] <- "NC"
+
+
+# The clinical ID, Day, Clinical classification, Gender and Death columns are taken out are taken out to create a numerical table
+merged_table_numerical <- merged_table %>%
+  select(-ID, -Day, -Clinical_Classification, -Gender, -Death)
+
+# Normalize the table with the Min-Max Normalization method
+normalize <- function(x) {
+  return((x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)) * 100)
+}
+
+normalized_table <- apply(merged_table_numerical, 2, normalize)
+
+# Create the colors palette needed for the annotation
+groups_palette <- c("#f7746f", "#0fbc40", "#619cff", "#fffd99", "grey")
+colors_by_group <- groups_palette[as.factor(group_labels)]
+
+
+
+# Heatmap
+column_annotations = HeatmapAnnotation(
+  Groups = group_labels,
+  col = list(
+    Groups = setNames(unique(colors_by_group), unique(group_labels))
+  ),
+  show_legend = TRUE
+)
+
+normalized_table_t <- t(normalized_table)
+
+# We add a supress warnings to avoid the conversion failure warning of the unusual characters. As the final result has these characters correctly displayed it is not a problem
+suppressWarnings(
+  Heatmap(normalized_table_t,
+          name = "Expression",
+          col = colorRamp2(c(0, 50, 100), 
+                         c("#fff5eb", "#fd9c55", "#8c2c02")),
+          top_annotation = column_annotations,
+          show_row_names = TRUE,
+          show_column_names = FALSE,
+          row_names_gp = gpar(fontsize = 7),
+          column_title = "Patients")
+)
 
 ```
 
 ## Improve figure 2 of the publication
+
 Add a second annotation with information of deathm and a third one with information of gender
 
 ```{r}
 
-```
+# Create all the colors palettes needed for all the annotations
+groups_palette <- c("#0fbc40", "#386cb0", "#f87772", "#fffd99", "grey")
+colors_by_group <- groups_palette[as.factor(group_labels)]
+gender_palette <- c("#1f78b4", "#cab2d6", "grey")
+colors_by_gender <- gender_palette[as.factor(gender_labels)]
+death_palette <- c("grey", "#1b9e77", "#d95f02")
+colors_by_death <- death_palette[as.factor(death_labels)]
 
+column_annotations2 = HeatmapAnnotation(
+  Gender = gender_labels,
+  Death = death_labels,
+  Groups = group_labels,
+  col = list(
+    Gender = setNames(unique(colors_by_gender), unique(gender_labels)),
+    Death = setNames(unique(colors_by_death), unique(death_labels)),
+    Groups = setNames(unique(colors_by_group), unique(group_labels))
+  ),
+  show_legend = TRUE
+)
+suppressWarnings(
+  Heatmap(normalized_table_t,
+          name = "Normalized
+  Expression",
+          col = colorRamp2(c(0, 50, 100), 
+                          c("#f7fcfd", "#66c2a4", "#084283")),
+          top_annotation = column_annotations2,
+          show_row_names = TRUE,
+          show_column_names = FALSE,
+          row_names_gp = gpar(fontsize = 7),
+          column_title = "Patients")
+)
+         
+
+```
 
 # session info {.unnumbered}
 
